@@ -1,0 +1,102 @@
+```{r}
+library(dplyr)
+library(tidyverse)
+library(tibble)
+```
+
+```{r}
+obj  = readRDS("/Volumes/backup-harddrive/2-isolate_neurons_output.RDS")
+obj = JoinLayers(obj)
+obj@assays$RNA@layers$data <- NULL
+obj@assays$RNA@layers$scale.data <- NULL
+```
+
+```{r}
+obj$timepoint <- NA
+obj$timepoint[obj$orig.ident %in% c('E10.5_WT')] = '10.5'
+obj$timepoint[obj$orig.ident %in% c('E12.5_WT2', 'E12.5_WT1')] = '12.5'
+obj$timepoint[obj$orig.ident %in% c('E14.5_WT1', 'E14.5_WT2')] = '14.5'
+```
+
+```{r}
+timepoints = c('10.5', '12.5', '14.5')
+obj.tc <- setNames(vector("list", length(timepoints)), timepoints)
+for (t in timepoints){
+  Idents(obj) = 'timepoint'
+  obj.tc[[t]] = subset(obj, idents=t)
+  counts = GetAssayData(obj.tc[[t]], assay = "RNA", layer = "counts")
+  obj.tc[[t]][["RNA"]] = CreateAssay5Object(counts = counts)
+  if (length(unique(obj.tc[[t]]$orig.ident)) > 1) {
+    obj.tc[[t]] = split(obj.tc[[t]], f = obj.tc[[t]]$orig.ident)
+  }
+  obj.tc[[t]] = NormalizeData(obj.tc[[t]])
+  obj.tc[[t]] = FindVariableFeatures(obj.tc[[t]])
+  obj.tc[[t]] = ScaleData(obj.tc[[t]])
+  if (length(unique(obj.tc[[t]]$orig.ident)) > 1) {
+    obj.tc[[t]] <- IntegrateLayers(
+      object = obj.tc[[t]], method = CCAIntegration,
+      k.weight = 50,
+      orig.reduction = "pca", new.reduction = "integrated.cca",
+      verbose = FALSE
+         )
+  }
+  else {
+     obj.tc[[t]] = RunPCA(obj.tc[[t]], reduction.name = "integrated.cca")
+      }
+  obj.tc[[t]] <- FindNeighbors(obj.tc[[t]], reduction = "integrated.cca", dims = 1:30)
+  obj.tc[[t]] <- FindClusters(obj.tc[[t]], resolution = 1, cluster.name = "cca_clusters")
+  
+  obj.tc[[t]] <- RunUMAP(obj.tc[[t]], reduction = "integrated.cca", dims = 1:30, reduction.name = "umap.cca")
+}
+```
+
+```{r}
+xlimits = list('10.5'=c(-8,6), '12.5' = c(-10,10), '14.5' = c(-9, 13))
+ylimits = list('10.5' = c(-6,8), '12.5' = c(-10,10), '14.5' = c(-11, 11))
+
+for (t in timepoints){
+  p = DimPlot(obj.tc[[t]], reduction = "umap.cca", group.by = "class", label = TRUE) + xlim(xlimits[[t]][1], xlimits[[t]][2]) +   ylim(ylimits[[t]][1], xlimits[[t]][2]) + coord_equal()
+  print(p)
+  ggsave(paste0('/Volumes/backup-harddrive/figures/figure 1/', t , 'neuron_class_umap.svg'), plot = p )
+}
+```
+```{r}
+cluster.sample <- table(obj$class, obj$timepoint) %>%
+    as.data.frame.matrix() %>%
+    rownames_to_column(var = "sample")
+  cluster.sample[-1] <- lapply(cluster.sample[-1], function(x) x/sum(x))
+  cluster.sample <- cluster.sample %>%
+    pivot_longer(
+      cols = -c("sample"),
+      names_to = "cluster",
+      values_to = "count"
+    )
+  cluster.sample$cluster <- factor(cluster.sample$cluster, levels = unique(cluster.sample$cluster))
+  cluster.sample$sample <- factor(cluster.sample$sample, levels = c('neuron', 'neuroblast', 'progenitor'))
+p = ggplot(cluster.sample, aes(x=cluster, y=count, fill=sample)) +
+    geom_bar(stat="identity") +
+    theme_minimal()  
+ggsave(paste0('/Volumes/backup-harddrive/figures/figure 1/neuron_class_bar.svg'), plot = p)
+```
+
+```{r}
+xlimits = list('10.5'=c(-8,6), '12.5' = c(-10,10), '14.5' = c(-9, 13))
+ylimits = list('10.5' = c(-6,8), '12.5' = c(-10,10), '14.5' = c(-11, 11))
+for (g in c('Mef2c', 'Btg2', 'Mllt11')){
+for (t in timepoints){
+  p = FeaturePlot(obj.tc[[t]], g, reduction = "umap.cca", max.cutoff = 2) + NoLegend() + xlim(xlimits[[t]][1], xlimits[[t]][2]) +   ylim(ylimits[[t]][1], xlimits[[t]][2]) + coord_equal()
+  print(p)
+  ggsave(paste0('/Volumes/backup-harddrive/figures/figure 1/', t, '_', g ,'_', 'neuron_ feature_umap.svg'), plot = p )
+}}
+```
+```{r}
+
+```
+
+
+
+
+```{r}
+saveRDS(obj.tc, '/Volumes/backup-harddrive/3-analyze_timepoints_output.RDS')
+```
+
