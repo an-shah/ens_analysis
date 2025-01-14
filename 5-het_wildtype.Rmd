@@ -1,0 +1,351 @@
+```{r}
+obj.het = readRDS('/Volumes/backup-harddrive/timecourse_object_all_HET.rds')
+obj.het <- FindClusters(obj.het, resolution = 5, cluster.name = "cca_clusters.5")
+obj.het <- FindClusters(obj.het, resolution = 2, cluster.name = "cca_clusters.2")
+obj.wt = readRDS('/Volumes/backup-harddrive/4-timepoint_typesWT_labeled.rds')
+obj.het$genotype = 'Het'
+obj.wt$genotype = 'WT'
+```
+
+```{r}
+type_genes = c('Mef2c', 'Btg2',"Etv1", "Vip", "Calb1" , "Bnc2", "Ndufa4l2" , "Ano2", "Sema5a", "Penk", "Mgat4c", "Gal","Nos1", "Ntng1", "Slc18a2" , "Gda")
+DimPlot(obj.het, reduction = "umap.cca", group.by = "cca_clusters.2", label = TRUE)
+for(g in type_genes){
+  p = FeaturePlot(obj.het, g, reduction = "umap.cca")
+  print(p)
+}
+Idents(obj.het) = 'cca_clusters'
+DotPlot(obj.het, type_genes, scale = F)
+```
+
+
+```{r}
+obj.het$type = NA
+obj.het$type[obj.het$cca_clusters.2 %in% c(11, 13)] = 'iMN_8/9' 
+obj.het$type[obj.het$cca_clusters.2 %in% c(7,14)] = 'eMN_1' 
+obj.het$type[obj.het$cca_clusters.2 %in% c(9)] = 'eMN_7' 
+obj.het$type[obj.het$cca_clusters.2 %in% c(6)] = 'neuroblast' 
+obj.het$type[obj.het$cca_clusters.2 %in% c(0,1,2,3,4,5,8,10,12,15,16,17,18)] = 'progenitor' 
+```
+
+```{r}
+p = DimPlot(obj.het, reduction = "umap.cca", group.by = "type", label = T) +xlim(-7, 11) + ylim(-10,8) + coord_equal()
+print(p)
+ggsave(paste0('/Volumes/backup-harddrive/figures/figure 3/hetumap.svg'), plot = p)
+```
+
+```{r}
+obj = merge(obj.wt, obj.het)
+obj = JoinLayers(obj)
+obj@assays$RNA@layers$scale.data <- NULL
+obj@assays$RNA@layers$scale.data.1 <- NULL
+obj = split(obj, f = obj$orig.ident)
+obj = NormalizeData(obj)
+obj = FindVariableFeatures(obj)
+obj = ScaleData(obj)
+obj = RunPCA(obj)
+obj <- IntegrateLayers(
+  object = obj, method = CCAIntegration,
+  k.weight = 50, 
+  orig.reduction = "pca", new.reduction = "integrated.cca",
+  verbose = FALSE
+)
+
+obj <- FindNeighbors(obj, reduction = "integrated.cca", dims = 1:30)
+obj <- FindClusters(obj, resolution = 3, cluster.name = "cca_clusters")
+obj <- RunUMAP(obj, reduction = "integrated.cca", dims = 1:30, reduction.name = "umap.cca")
+```
+
+```{r}
+DimPlot(obj, reduction = "umap.cca", group.by = "cca_clusters", label = T) +xlim(-8, 11) + ylim(-8,11) + coord_equal()
+```
+
+
+```{r}
+p = DimPlot(obj, reduction = "umap.cca", group.by = "type", label = T) +xlim(-8, 11) + ylim(-8,11) + coord_equal()
+print(p)
+ggsave(paste0('/Volumes/backup-harddrive/figures/figure 3/alltype_umap.svg'), plot = p)
+```
+
+
+```{r}
+p = DimPlot(obj, reduction = "umap.cca", group.by = "genotype", shuffle = T) +xlim(-8, 11) + ylim(-8,11) + coord_equal()
+print(p)
+ggsave(paste0('/Volumes/backup-harddrive/figures/figure 3/genotype_umap.svg'), plot = p)
+```
+
+
+```{r}
+cluster.sample <- table(obj$class, obj$timepoint) %>%
+    as.data.frame.matrix() %>%
+    rownames_to_column(var = "sample")
+  cluster.sample[-1] <- lapply(cluster.sample[-1], function(x) x/sum(x))
+  cluster.sample <- cluster.sample %>%
+    pivot_longer(
+      cols = -c("sample"),
+      names_to = "cluster",
+      values_to = "count"
+    )
+  cluster.sample$cluster <- factor(cluster.sample$cluster, levels = unique(cluster.sample$cluster))
+  cluster.sample$sample <- factor(cluster.sample$sample, levels = c('neuron', 'neuroblast', 'progenitor'))
+p = ggplot(cluster.sample, aes(x=cluster, y=count, fill=sample)) +
+    geom_bar(stat="identity") +
+    theme_minimal() 
+print(p)
+#ggsave(paste0('/Volumes/backup-harddrive/figures/figure 1/neuron_class_bar.svg'), plot = p)
+```
+```{r}
+library(dplyr) 
+library(ggplot2) # Extract metadata
+
+for (t in c(12.5, 14.5)) {
+
+metadata <- obj@meta.data # Filter for relevant timepoints
+metadata <- metadata %>% filter(timepoint %in% c(t)) # Calculate relative frequencies 
+freqs <- metadata %>% 
+  group_by(timepoint, genotype, class) %>% 
+  summarise(count = n(), .groups = "drop") %>% 
+  group_by(timepoint, genotype) %>% 
+  mutate(relative_frequency = count / sum(count)) %>% 
+  ungroup() 
+# Compute differences (het - wt) 
+differences <- freqs %>% 
+  pivot_wider(names_from = genotype, values_from = relative_frequency)
+
+differences$WT[is.na(differences$WT)] <- differences$WT[!is.na(differences$WT)]
+differences <- differences[!is.na(differences$Het),] %>%
+  mutate(diff = Het - WT)
+
+p <- ggplot(differences, aes(x = class, y = diff, fill = class)) + 
+  geom_bar(stat = "identity") + 
+  facet_wrap(~timepoint) + 
+  theme_minimal() + 
+  labs( title = paste("Difference in Relative Frequencies of 'class' (het - wt)", t ), x = "Paper Type", y = "Difference in Relative Frequency" ) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + ylim(-0.2, 0.2)
+
+print(p)
+ggsave(paste0('/Volumes/backup-harddrive/figures/figure 3/differentclass' ,t ,'.svg'), plot = p)
+}
+```
+```{r}
+obj.E12.5 = subset(obj, timepoint = '12.5') 
+obj.neuron = subset(obj.E12.5, type==c('eMN_7', 'eMN_1'))
+cluster.sample <- table(obj.neuron$type, obj.neuron$genotype) %>%
+    as.data.frame.matrix() %>%
+    rownames_to_column(var = "sample")
+  cluster.sample[-1] <- lapply(cluster.sample[-1], function(x) x/sum(x))
+  cluster.sample <- cluster.sample %>%
+    pivot_longer(
+      cols = -c("sample"),
+      names_to = "cluster",
+      values_to = "count"
+    )
+  cluster.sample$cluster <- factor(cluster.sample$cluster, levels = c('WT', 'Het'))
+  cluster.sample$sample <- factor(cluster.sample$sample, levels = c('eMN_7', 'eMN_1'))
+p = ggplot(cluster.sample, aes(x=cluster, y=count, fill=sample)) +
+    geom_bar(stat="identity") +
+    theme_minimal()  
+print(p)
+ggsave(paste0('/Volumes/backup-harddrive/figures/figure 3/12.5eMN_type_bar.svg'), plot = p)
+```
+
+```{r}
+obj.E14.5 = subset(obj, timepoint = '14.5') 
+obj.neuron = subset(obj.E14.5, type==c('eMN_7', 'eMN_1'))
+cluster.sample <- table(obj.neuron$type, obj.neuron$genotype) %>%
+    as.data.frame.matrix() %>%
+    rownames_to_column(var = "sample")
+  cluster.sample[-1] <- lapply(cluster.sample[-1], function(x) x/sum(x))
+  cluster.sample <- cluster.sample %>%
+    pivot_longer(
+      cols = -c("sample"),
+      names_to = "cluster",
+      values_to = "count"
+    )
+  cluster.sample$cluster <- factor(cluster.sample$cluster, levels = c('WT', 'Het'))
+  cluster.sample$sample <- factor(cluster.sample$sample, levels = c('eMN_7', 'eMN_1'))
+p = ggplot(cluster.sample, aes(x=cluster, y=count, fill=sample)) +
+    geom_bar(stat="identity") +
+    theme_minimal()  
+print(p)
+ggsave(paste0('/Volumes/backup-harddrive/figures/figure 3/14.5eMN_type_bar.svg'), plot = p)
+```
+
+
+
+```{r}
+cluster.sample <- table(obj.het$type, obj.het$timepoint) %>%
+    as.data.frame.matrix() %>%
+    rownames_to_column(var = "sample")
+  cluster.sample[-1] <- lapply(cluster.sample[-1], function(x) x/sum(x))
+  cluster.sample <- cluster.sample %>%
+    pivot_longer(
+      cols = -c("sample"),
+      names_to = "cluster",
+      values_to = "count"
+    )
+cluster.sample$sample <- factor(
+cluster.sample$sample,
+  levels = c('eMN_7', 'eMN_1', 'iMN_12', 'iMN_8', 'iMN_9')
+)
+ cluster.sample %>% filter(is.na(cluster) | is.na(sample) | is.na(count)) %>% print()
+  cluster.sample$cluster <- factor(cluster.sample$cluster, levels = unique(cluster.sample$cluster))
+  #cluster.sample$sample <- factor(cluster.sample$sample, levels = c('eMN_7', 'eMN_1', 'iMN_12', 'iMN_8', 'iMN_9','neuroblast', 'progenitor' ))
+p = ggplot(cluster.sample, aes(x=cluster, y=count, fill=sample)) +
+    geom_bar(stat="identity", na.rm = T) +
+    theme_minimal()  
+print(p)
+#ggsave(paste0('/Volumes/backup-harddrive/figures/figure 3/neuron_class_bar'.svg), plot = p)
+```
+
+```{r}
+
+library(dplyr)
+library(tidyverse)
+library(reshape)
+
+IntegratedClusterOverlapHeatmap <- function(integrated.obj, integvar.col, ident.col, cluster.col, primary_order,
+                                     col.low = "white", col.high = "red", x.lab.rot = TRUE) {
+  
+  # Extract the relevant columns
+  metadata <- integrated.obj@meta.data %>% select(all_of(c(integvar.col, cluster.col, ident.col)))
+  
+  # Rename columns for convenience
+  colnames(metadata) <- c("integvar", "cluster", "ident")
+  
+  # Get unique integvar levels
+  integvar_levels <- unique(metadata$integvar)
+  
+  # Initialize an empty list to store overlap matrices for each pair of integvar levels
+  overlap_matrices <- list()
+  
+  # Sorting function
+  sort_ident <- function(ident, primary_order) {
+    primary <- sapply(ident, function(x) str_extract(x, paste(primary_order, collapse = "|")))
+    suffix <- sapply(ident, function(x) str_extract(x, "(?<=_)[A-Za-z0-9]+$"))
+    suffix_numeric <- suppressWarnings(as.numeric(suffix))
+    suffix[is.na(suffix_numeric)] <- paste0("Z", suffix[is.na(suffix_numeric)])  # Add "Z" prefix to non-numeric suffixes to sort them correctly
+    suffix_numeric[is.na(suffix_numeric)] <- Inf
+    df <- data.frame(ident = ident, primary = primary, suffix = suffix, suffix_numeric = suffix_numeric)
+    df <- df %>% arrange(match(primary, primary_order), suffix_numeric, suffix)
+    return(df$ident)
+  }
+  
+  # Loop through each pair of integvar levels
+  for (i in 1:(length(integvar_levels) - 1)) {
+    for (j in (i + 1):length(integvar_levels)) {
+      integvar1 <- integvar_levels[i]
+      integvar2 <- integvar_levels[j]
+      
+      # Filter the metadata for the two integvar levels
+      data_integvar1 <- metadata %>% filter(integvar == integvar1)
+      data_integvar2 <- metadata %>% filter(integvar == integvar2)
+      
+      # Get unique ident levels for each integvar level
+      ident_levels1 <- unique(data_integvar1$ident)
+      ident_levels2 <- unique(data_integvar2$ident)
+      
+      # Sort ident levels
+      sorted_ident_levels1 <- sort_ident(ident_levels1, primary_order)
+      sorted_ident_levels2 <- sort_ident(ident_levels2, primary_order)
+      
+      # Get unique clusters
+      clusters <- unique(metadata$cluster)
+      
+      # Initialize the overlap matrix
+      overlap_matrix <- matrix(0, nrow = length(sorted_ident_levels1), ncol = length(sorted_ident_levels2), 
+                               dimnames = list(rev(sorted_ident_levels1), sorted_ident_levels2))
+      
+      # Calculate overlap fractions
+      for (ident1 in sorted_ident_levels1) {
+        for (ident2 in sorted_ident_levels2) {
+          for (cluster in clusters) {
+            fraction_ident1 <- sum(data_integvar1$ident == ident1 & data_integvar1$cluster == cluster) / sum(data_integvar1$ident == ident1)
+            fraction_ident2 <- sum(data_integvar2$ident == ident2 & data_integvar2$cluster == cluster) / sum(data_integvar2$ident == ident2)
+            overlap_matrix[ident1, ident2] <- overlap_matrix[ident1, ident2] + min(fraction_ident1, fraction_ident2)
+          }
+        }
+      }
+      
+      # Convert overlap fractions to percentages
+      overlap_matrix <- overlap_matrix * 100
+      
+      # Store the overlap matrix in the list
+      overlap_matrices[[paste(integvar1, integvar2, sep = "_vs_")]] <- overlap_matrix
+    }
+  }
+  
+  # Plot the heatmap for each pair of integvar levels
+  for (name in names(overlap_matrices)) {
+    overlap_matrix <- overlap_matrices[[name]]
+    
+    # Melt the matrix for ggplot
+    melted <- melt(overlap_matrix)
+    colnames(melted) <- c("row", "col", "Percentage")
+    
+    # Create the heatmap plot
+    p <- ggplot(melted, aes(y = row, x = col)) + 
+      geom_tile(aes(fill = Percentage)) + 
+      scale_fill_gradient(low = col.low, high = col.high, limits = c(0, 100)) + 
+      geom_text(aes(label = sprintf("%.0f", Percentage)), size = 5) +
+      theme_bw() + 
+      xlab(integvar_levels[2]) + 
+      ylab(integvar_levels[1]) + 
+      theme(axis.text.x = element_text(size=16, face="italic", hjust=1, angle = ifelse(x.lab.rot, 90, 0)),
+            axis.text.y = element_text(size=16, face="italic"),
+            axis.title.x = element_text(size=16),
+            axis.title.y = element_text(size=16)) +
+      coord_fixed()
+    
+    # Ensure correct rotation
+    if (x.lab.rot) {
+      p <- p + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+    } else {
+      p <- p + theme(axis.text.x = element_text(angle = 0, vjust = 0.5, hjust=0.5))
+    }
+    
+    # print(p + ggtitle(paste("Overlap Heatmap:", name, ident.col, "at", cluster.col)))
+    p <- p + ggtitle(paste(name, ident.col, "at", cluster.col))
+  }
+  return(p)
+}
+
+p = IntegratedClusterOverlapHeatmap(obj, 'genotype', 'type', 'cca_clusters', c('progenitor', 'neuroblast', 'eMN_1', 'eMN_7', 'iMN_8/9', 'iMN_12'))
+print(p)
+ggsave(paste0('/Volumes/backup-harddrive/figures/figure 3/integratedheatmap.svg'), plot = p)
+```
+
+```{r}
+library(viridisLite)
+library(viridis)
+obj.wt <- JoinLayers(obj.wt)
+features = c('Mef2c', 'Btg2', 'Ndufa4l2', 'Mgat4c', 'Penk', 'Ntng1', 'Vip', 'Nos1', 'Calb1')
+Idents(obj.wt) = 'type'
+levels(obj.wt) = c("progenitor", 'neuroblast', 'eMN_1', 'eMN_7', 'iMN_8/9', 'iMN_12')
+DoHeatmap(obj.wt, features, slot = 'data', disp.max = 3) + scale_fill_viridis(option = "A")
+
+```
+
+```{r}
+obj.het <- JoinLayers(obj.het)
+features = c('Mef2c', 'Btg2', 'Ndufa4l2', 'Mgat4c', 'Penk', 'Ntng1', 'Vip', 'Nos1', 'Calb1')
+Idents(obj.het) = 'type'
+levels(obj.het) = c("progenitor", 'neuroblast', 'eMN_1', 'eMN_7', 'iMN_8/9', 'iMN_12')
+DoHeatmap(obj.het, features, slot = 'data', disp.max = 3) + scale_fill_viridis(option = "A")
+```
+```{r, fig.width=5, fig.height= 6}
+library(EnhancedVolcano)
+celltypes = c('progenitor', 'neuroblast', 'eMN_1', 'eMN_7', 'iMN_8/9')
+obj = JoinLayers(obj)
+for (c in celltypes){
+  o = subset(obj, type==c)
+  Idents(o) = 'genotype'
+  markers = FindMarkers(o, ident.1 = c('Het') , ident.2 = c('WT'))
+  p = EnhancedVolcano(markers, rownames(markers), x = 'avg_log2FC', y = 'p_val_adj') + xlim(-10,10)  + ylim(0, 80)
+  p$labels$title = c
+  print(p)
+  #ggsave(paste0('/Volumes/backup-harddrive/figures/figure 2/', t, '_volcano.svg'), plot = p, width=5, height=6)
+}
+
+```
+
