@@ -1,0 +1,171 @@
+### 1. Load and Process Raw Data
+```{r}
+library(Seurat)
+library(SeuratObject)
+library(scrubletR)
+library(reticulate)
+Sys.setenv(RETICULATE_PYTHON = "/Users/ananyashah/opt/anaconda3/envs/scrublet/bin/python")
+use_condaenv("scrublet")
+
+folder.names <- c("E10.5_WT", "E12.5_WT1", "E12.5_WT2", "E14.5_WT1", "E14.5_WT2")
+data.path <- "/Users/ananyashah/Desktop/Ananya/"
+objs <- list()
+
+for (f in folder.names) {
+  path <- file.path(data.path, f)
+  data <- Read10X(path)
+  obj.temp <- CreateSeuratObject(counts = data, project = f)
+  obj.temp <- scrublet_R(seurat_obj = obj.temp, python_home = Sys.getenv("RETICULATE_PYTHON"))
+  objs[[f]] <- obj.temp
+}
+
+obj <- merge(objs[[1]], objs[2:5])
+``` 
+
+```{r}
+#obj = readRDS('/Volumes/backup-harddrive/2-isolate_neurons_objs.RDS') 
+```
+
+
+### 2. Filter and Normalize
+```{r}
+#obj <- obj[, sample(colnames(obj), size = 30000, replace = FALSE)]
+obj$LowCount <- with(obj@meta.data, nFeature_RNA < 3000 & nCount_RNA < 50000 & nCount_RNA > 9000)
+obj$predicted_doublets <- obj$doublet_scores > 0.5
+obj$percent.mt <- PercentageFeatureSet(obj, pattern = "^mt-")
+
+obj <- JoinLayers(obj)
+cell_mask <- Reduce(intersect, list(
+  WhichCells(obj, expression = nFeature_RNA > 700),
+  WhichCells(obj, expression = nFeature_RNA < 10000),
+  WhichCells(obj, expression = nCount_RNA < 50000),
+  WhichCells(obj, expression = percent.mt < 12.5)
+))
+gene_mask <- rownames(obj)[Matrix::rowSums(obj@assays$RNA@layers$counts > 0) > 8]
+obj <- subset(obj, features = gene_mask, cells = cell_mask)
+``` 
+
+### 2b. QC Plots (Violin + Scatter) ---
+```{r}
+
+VlnPlot(obj, features = "nFeature_RNA", group.by = "orig.ident", pt.size = 0.1) +
+  ggtitle("nFeature_RNA per Sample")
+VlnPlot(obj, features = "nCount_RNA", group.by = "orig.ident", pt.size = 0.1) +
+  ggtitle("nCount_RNA per Sample")
+
+
+FeatureScatter(obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA", group.by = "orig.ident") +
+  ggtitle("nCount_RNA vs. nFeature_RNA (by Sample)")
+
+
+FeatureScatter(obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA", group.by = "predicted_doublets") +
+  ggtitle("nCount_RNA vs. nFeature_RNA (by Doublet Status)")
+
+
+VlnPlot(obj, features = "doublet_scores", group.by = "predicted_doublets", pt.size = 0.1) +
+  ggtitle("Doublet Scores by Doublet Prediction")
+
+
+FeatureScatter(obj, feature1 = "percent.mt", feature2 = "nCount_RNA", group.by = "LowCount") +
+  ggtitle("percent.mt vs. nCount_RNA (LowCount Flagged)")
+
+
+VlnPlot(obj, features = "percent.mt", group.by = "unintegrated_clusters", pt.size = 0.1) +
+  ggtitle("percent.mt by Unintegrated Cluster")
+
+
+### 3. PCA and Clustering
+```{r}
+obj <- NormalizeData(obj)
+obj <- FindVariableFeatures(obj)
+obj <- ScaleData(obj)
+obj <- RunPCA(obj)
+obj <- FindNeighbors(obj, dims = 1:30)
+obj <- FindClusters(obj, resolution = 2, cluster.name = "unintegrated_clusters")
+obj <- RunUMAP(obj, dims = 1:30, reduction.name = "umap.unintegrated")
+``` 
+
+### 4. Initial Visualizations
+```{r}
+DimPlot(obj, reduction = "umap.unintegrated", group.by = "orig.ident")
+DimPlot(obj, reduction = "umap.unintegrated", group.by = "unintegrated_clusters", label = TRUE)
+FeaturePlot(obj, "percent.mt", reduction = "umap.unintegrated")
+VlnPlot(obj, "percent.mt", group.by = "unintegrated_clusters")
+DotPlot(obj, features = c("Sox10", "Uchl1", "Snap25", "Wnt1")) + coord_flip()
+``` 
+
+### 5. Integration with CCA
+```{r}
+obj <- IntegrateLayers(
+  object = obj, 
+  method = CCAIntegration,
+  orig.reduction = "pca", 
+  new.reduction = "integrated.cca",
+  verbose = FALSE
+)
+obj <- FindNeighbors(obj, reduction = "integrated.cca", dims = 1:30)
+obj <- FindClusters(obj, resolution = 2, cluster.name = "cca_clusters")
+obj <- RunUMAP(obj, reduction = "integrated.cca", dims = 1:30, reduction.name = "umap.cca")
+``` 
+
+```{r}
+obj = readRDS("/Volumes/backup-harddrive/Ananya/development_all_integrated.rds")
+```
+
+### 6. UMAP of Integrated Clusters
+```{r}
+DimPlot(obj, reduction = "umap.cca", group.by = "cca_clusters", label = TRUE)
+library(dplyr)
+library(tidyverse)
+library(tibble)
+cluster.sample <- table(obj$orig.ident, obj$cca_clusters) %>%
+    as.data.frame.matrix() %>%
+    rownames_to_column(var = "sample")
+  cluster.sample[-1] <- lapply(cluster.sample[-1], function(x) x/sum(x))
+  cluster.sample <- cluster.sample %>%
+    pivot_longer(
+      cols = -c("sample"),
+      names_to = "cluster",
+      values_to = "count"
+    )
+  cluster.sample$cluster <- factor(cluster.sample$cluster, levels = unique(cluster.sample$cluster))
+ggplot(cluster.sample, aes(x=cluster, y=count, fill=sample)) +
+    geom_bar(stat="identity") +
+    theme_minimal()
+
+DimPlot(
+  obj,
+  reduction = "umap.cca",
+  group.by = "cca_clusters",
+  label = TRUE
+)
+DimPlot(
+  obj,
+  reduction = "umap.cca",
+  group.by = "predicted_doublets",
+  label = TRUE
+)
+``` 
+
+### 7. DotPlot with Key Markers
+```{r}
+neuron_markers <- c("Tubb3", "Elavl4", "Ret", "Phox2b", "Snap25", "Uchl1")
+glia_markers <- c("Sox10", "Plp1", "Fabp7", "Erbb3", "Gas7")
+DotPlot(obj, features = c(neuron_markers, glia_markers), scale.max = 50) + coord_flip()
+``` 
+
+### 8. Relative Cluster Proportions by Sample
+```{r}
+library(tidyverse)
+cluster.sample <- table(obj$orig.ident, obj$cca_clusters) %>%
+  as.data.frame.matrix() %>%
+  rownames_to_column(var = "sample")
+cluster.sample[-1] <- lapply(cluster.sample[-1], function(x) x / sum(x))
+cluster.sample <- cluster.sample %>%
+  pivot_longer(cols = -sample, names_to = "cluster", values_to = "count")
+
+ggplot(cluster.sample, aes(x = cluster, y = count, fill = sample)) +
+  geom_bar(stat = "identity") +
+  theme_minimal() +
+  labs(title = "Relative Cluster Proportions", x = "Cluster", y = "Proportion")
+```
