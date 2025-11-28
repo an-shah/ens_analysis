@@ -5,11 +5,46 @@ obj.het <- FindClusters(obj.het, resolution = 2, cluster.name = "cca_clusters.2"
 obj.wt = readRDS('/Volumes/backup-harddrive/4-timepoint_typesWT_labeled.rds')
 obj.het$genotype = 'Het'
 obj.wt$genotype = 'WT'
+
 ```
+
+```{r, fig.width=5, fig.height=5}
+DimPlot(obj.wt, reduction = "umap.cca", group.by = "type", label = TRUE)
+p <- FeaturePlot(obj.wt, 'Ret', reduction = 'umap.cca', max.cutoff = 2) + xlim(-10,7) + ylim(-8, 9) + coord_equal()
+print(p)
+ggsave(paste0('/Volumes/backup-harddrive/figures/figure 3/wt_Ret_featplot.svg'), plot = p)
+# library(EnhancedVolcano)
+# obj.wt = JoinLayers(obj.wt)
+# Idents(obj.wt) = 'type'
+# markers = FindMarkers(obj.wt, ident.1 = c('iMN_12') , ident.2 = c('iMN_8/9'))
+# p = EnhancedVolcano(markers, rownames(markers), x = 'avg_log2FC', y = 'p_val_adj') + xlim(-10,10)  + ylim(0, 80)
+# print(p)
+#ggsave(paste0('/Volumes/backup-harddrive/figures/figure 2/', t, '_volcano.svg'), plot = p, width=5, height=6)
+```
+
+```{r, fig.width=5, fig.height=5}
+DimPlot(obj.het, reduction = "umap.cca", group.by = "cca_clusters.2", label = TRUE)
+DimPlot(obj.het, reduction = "umap.cca", group.by = "cca_clusters.5", label = TRUE)
+p <- FeaturePlot(obj.het, 'Ret', reduction = 'umap.cca', max.cutoff = 2) +xlim(-7, 11) + ylim(-10,8) + coord_equal()
+print(p)
+ggsave(paste0('/Volumes/backup-harddrive/figures/figure 3/het_Ret_featplot.svg'), plot = p)
+# obj.het = JoinLayers(obj.het)
+# Idents(obj.het) = 'cca_clusters.2'
+# markers = FindMarkers(obj.het, ident.1 = c('11') , ident.2 = c('13'))
+# p = EnhancedVolcano(markers, rownames(markers), x = 'avg_log2FC', y = 'p_val_adj') + xlim(-10,10)  + ylim(0, 80)
+# print(p)
+```
+
+```{r, fig.width = 3, fig.height=5}
+p <- VlnPlot(obj, "Ret", group.by = "genotype", sort = "increasing", pt.size = 0.1)
+print(p)
+ggsave(paste0('/Volumes/backup-harddrive/figures/figure 3/Ret_expression.svg'), plot = p)
+```
+
 
 ```{r}
 type_genes = c('Mef2c', 'Btg2',"Etv1", "Vip", "Calb1" , "Bnc2", "Ndufa4l2" , "Ano2", "Sema5a", "Penk", "Mgat4c", "Gal","Nos1", "Ntng1", "Slc18a2" , "Gda")
-DimPlot(obj.het, reduction = "umap.cca", group.by = "cca_clusters.2", label = TRUE)
+DimPlot(obj.het, reduction = "umap.cca", group.by = "cca_clusters.5", label = TRUE)
 for(g in type_genes){
   p = FeaturePlot(obj.het, g, reduction = "umap.cca")
   print(p)
@@ -18,10 +53,19 @@ Idents(obj.het) = 'cca_clusters'
 DotPlot(obj.het, type_genes, scale = F)
 ```
 
+```{r}
+
+for (g in c('Ntng1')){  
+  p = FeaturePlot(obj.het, g, reduction = "umap.cca", max.cutoff = 2) + NoLegend()+ coord_equal()
+
+  print(p)}
+```
+
 
 ```{r}
 obj.het$type = NA
-obj.het$type[obj.het$cca_clusters.2 %in% c(11, 13)] = 'iMN_8/9' 
+obj.het$type[obj.het$cca_clusters.2 %in% c(13)] = 'iMN_8/9'
+obj.het$type[obj.het$cca_clusters.2 %in% c(11)] = 'iMN_12' 
 obj.het$type[obj.het$cca_clusters.2 %in% c(7,14)] = 'eMN_1' 
 obj.het$type[obj.het$cca_clusters.2 %in% c(9)] = 'eMN_7' 
 obj.het$type[obj.het$cca_clusters.2 %in% c(6)] = 'neuroblast' 
@@ -129,7 +173,7 @@ ggsave(paste0('/Volumes/backup-harddrive/figures/figure 3/differentclass' ,t ,'.
 ```
 ```{r}
 obj.E12.5 = subset(obj, timepoint = '12.5') 
-obj.neuron = subset(obj.E12.5, type==c('eMN_7', 'eMN_1'))
+obj.neuron = subset(obj.E12.5, type==c('iMN_8/9', 'iMN_12'))
 cluster.sample <- table(obj.neuron$type, obj.neuron$genotype) %>%
     as.data.frame.matrix() %>%
     rownames_to_column(var = "sample")
@@ -141,7 +185,7 @@ cluster.sample <- table(obj.neuron$type, obj.neuron$genotype) %>%
       values_to = "count"
     )
   cluster.sample$cluster <- factor(cluster.sample$cluster, levels = c('WT', 'Het'))
-  cluster.sample$sample <- factor(cluster.sample$sample, levels = c('eMN_7', 'eMN_1'))
+  cluster.sample$sample <- factor(cluster.sample$sample, levels = c('iMN_8/9', 'iMN_12'))
 p = ggplot(cluster.sample, aes(x=cluster, y=count, fill=sample)) +
     geom_bar(stat="identity") +
     theme_minimal()  
@@ -151,7 +195,7 @@ ggsave(paste0('/Volumes/backup-harddrive/figures/figure 3/12.5eMN_type_bar.svg')
 
 ```{r}
 obj.E14.5 = subset(obj, timepoint = '14.5') 
-obj.neuron = subset(obj.E14.5, type==c('eMN_7', 'eMN_1'))
+obj.neuron = subset(obj.E14.5, type==c('iMN_8/9', 'iMN_12'))
 cluster.sample <- table(obj.neuron$type, obj.neuron$genotype) %>%
     as.data.frame.matrix() %>%
     rownames_to_column(var = "sample")
@@ -163,7 +207,7 @@ cluster.sample <- table(obj.neuron$type, obj.neuron$genotype) %>%
       values_to = "count"
     )
   cluster.sample$cluster <- factor(cluster.sample$cluster, levels = c('WT', 'Het'))
-  cluster.sample$sample <- factor(cluster.sample$sample, levels = c('eMN_7', 'eMN_1'))
+  cluster.sample$sample <- factor(cluster.sample$sample, levels = c('iMN_8/9', 'iMN_12'))
 p = ggplot(cluster.sample, aes(x=cluster, y=count, fill=sample)) +
     geom_bar(stat="identity") +
     theme_minimal()  
@@ -186,7 +230,7 @@ cluster.sample <- table(obj.het$type, obj.het$timepoint) %>%
     )
 cluster.sample$sample <- factor(
 cluster.sample$sample,
-  levels = c('eMN_7', 'eMN_1', 'iMN_12', 'iMN_8', 'iMN_9')
+  levels = c('eMN_7', 'eMN_1', 'iMN_12', 'iMN_8/9', 'progenitor', 'neuroblast')
 )
  cluster.sample %>% filter(is.na(cluster) | is.na(sample) | is.na(count)) %>% print()
   cluster.sample$cluster <- factor(cluster.sample$cluster, levels = unique(cluster.sample$cluster))
