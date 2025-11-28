@@ -1,0 +1,101 @@
+---
+title: "R Notebook"
+output: 
+---
+
+```{r}
+obj.wt = readRDS('/Volumes/backup-harddrive/4-timepoint_typesWT_labeled.rds')
+obj.wt <- JoinLayers(obj.wt)
+obj.het = readRDS('/Volumes/backup-harddrive/timecourse_object_all_HET.rds')
+obj.het <- JoinLayers(obj.het)
+obj.het <- FindClusters(obj.het, resolution = 5, cluster.name = "cca_clusters.5")
+obj.het <- FindClusters(obj.het, resolution = 2, cluster.name = "cca_clusters.2")
+obj.het$genotype = 'Het'
+obj.wt$genotype = 'WT'
+
+obj.het$type = NA
+obj.het$type[obj.het$cca_clusters.2 %in% c(13)] = 'iMN_8/9'
+obj.het$type[obj.het$cca_clusters.2 %in% c(11)] = 'iMN_12' 
+obj.het$type[obj.het$cca_clusters.2 %in% c(7,14)] = 'eMN_1' 
+obj.het$type[obj.het$cca_clusters.2 %in% c(9)] = 'eMN_7' 
+obj.het$type[obj.het$cca_clusters.2 %in% c(6)] = 'neuroblast' 
+obj.het$type[obj.het$cca_clusters.2 %in% c(0,1,2,3,4,5,8,10,12,15,16,17,18)] = 'progenitor' 
+```
+
+```{r}
+SeuratToMonocle3 <- function(seurat_obj, assay = "RNA") {
+  expr_mat <- GetAssayData(seurat_obj, assay = assay, layer = "counts")
+  cell_md <- seurat_obj@meta.data
+  gene_md <- data.frame(gene_short_name = rownames(expr_mat),
+                        row.names = rownames(expr_mat))
+  cds <- new_cell_data_set(
+    expression_data = expr_mat,
+    cell_metadata = cell_md,
+    gene_metadata = gene_md
+  )
+  cds
+}
+```
+
+```{r}
+obj.wt.imn <- subset(obj.wt, type %in% c("neuroblast", "eMN_4", "eMN_7"))
+obj.wt.imn <- subset(obj.wt.imn, timepoint %in% c("12.5"))
+cds.wt.imn <- SeuratToMonocle3(obj.wt.imn)
+obj.het.imn <- subset(obj.het, type %in% c("neuroblast", "eMN_7", "eMN_4"))
+obj.het.imn <- subset(obj.het.imn, timepoint %in% c("12.5"))
+cds.het.imn <- SeuratToMonocle3(obj.het.imn)
+cds.imn <- combine_cds(list(cds.wt.imn, cds.het.imn))
+```
+
+```{r}
+root_cells <- colnames(cds.imn)[colData(cds.imn)$type == "neuroblast"]
+cds.imn <- preprocess_cds(cds.imn, method = "PCA")
+cds.imn <- reduce_dimension(cds.imn, reduction_method = "UMAP")
+cds.imn <- cluster_cells(cds.imn, reduction_method = "UMAP")
+cds.imn <- learn_graph(cds.imn, use_partition = T)
+cds.imn <- order_cells(cds.imn, root_cells = root_cells)
+```
+
+```{r}
+plot_cells(
+  cds.imn,
+  color_cells_by = "pseudotime",
+  label_branch_points = F,
+  label_leaves = F,
+  label_roots = F
+)
+plot_cells(
+  cds.imn,
+  color_cells_by = "type",
+  label_branch_points = F,
+  label_leaves = F,
+  label_roots = F
+)
+plot_cells(
+  cds.imn,
+  color_cells_by = "genotype",
+  label_branch_points = F,
+  label_leaves = F,
+  label_roots = F
+)
+plot_cells(
+  cds.imn,
+  color_cells_by = "timepoint",
+  label_branch_points = F,
+  label_leaves = F,
+  label_roots = F
+)
+plot_cells(
+  cds.imn,
+  color_cells_by = "sample",
+  label_branch_points = F,
+  label_leaves = F,
+  label_roots = F
+)
+```
+```{r}
+pt <- pseudotime(cds.imn)
+print(mean(pt[colData(cds.imn)$genotype == "WT"]))
+print(mean(pt[colData(cds.imn)$genotype == "Het"]))
+```
+
